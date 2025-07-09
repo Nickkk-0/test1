@@ -1,1 +1,241 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import datetime
+import numpy as np
 
+# --- Configuration ---
+st.set_page_config(
+    page_title="Market Sentiment Dashboard",
+    layout="wide", # Use wide layout for better visualization on larger screens
+    initial_sidebar_state="expanded" # Keep sidebar expanded by default
+)
+
+# --- Helper Functions (Mock Data Generation) ---
+# This function generates dummy data for demonstration purposes.
+# In a real application, you would replace this with calls to your database
+# and actual data processing logic.
+@st.cache_data # Cache the data generation to improve performance on subsequent runs
+def generate_mock_data(start_date, end_date, selected_ticker):
+    """
+    Generates mock sentiment, price, top Reddit posts, and ticker frequency data.
+    This function simulates fetching data from a backend.
+    """
+    dates = pd.date_range(start=start_date, end=end_date, freq='D')
+    num_days = len(dates)
+
+    # If no dates in range, return empty DataFrames and lists
+    if num_days == 0:
+        return pd.DataFrame(), pd.DataFrame(), [], pd.DataFrame()
+
+    # Mock Sentiment Data: Simulates positive, negative, and neutral sentiment scores
+    sentiment_data = {
+        'Date': dates,
+        'Positive': np.random.uniform(0.1, 0.7, num_days), # Random positive sentiment
+        'Negative': np.random.uniform(0.05, 0.4, num_days), # Random negative sentiment
+        'Neutral': np.random.uniform(0.1, 0.5, num_days) # Random neutral sentiment
+    }
+    df_sentiment = pd.DataFrame(sentiment_data)
+    # Calculate overall sentiment as Positive - Negative, clamped between -1 and 1
+    df_sentiment['Overall_Sentiment'] = df_sentiment['Positive'] - df_sentiment['Negative']
+    df_sentiment['Overall_Sentiment'] = df_sentiment['Overall_Sentiment'].apply(lambda x: max(-1.0, min(1.0, x)))
+
+    # Mock Price Data: Simulates a stock price using a simple random walk
+    initial_price = np.random.uniform(100, 500) # Starting price
+    price_changes = np.random.normal(0, 5, num_days) # Daily price changes
+    prices = initial_price + np.cumsum(price_changes) # Cumulative sum for price trend
+    df_price = pd.DataFrame({
+        'Date': dates,
+        'Price': prices
+    })
+
+    # Mock Top Reddit Posts: Example posts, some related to the selected ticker
+    mock_posts = [
+        f"[{selected_ticker}] Soaring to new heights! Bullish sentiment all around. 🚀",
+        f"Concerns about {selected_ticker} production numbers this quarter. 📉",
+        f"New partnerships announced for {selected_ticker}. What does this mean?",
+        f"Reddit users are debating the future of {selected_ticker} in the EV market.",
+        f"Just bought more {selected_ticker} on the dip. To the moon! �",
+        f"Analysts downgrade {selected_ticker} stock. Is it time to sell?",
+        f"Interesting discussion on {selected_ticker}'s battery technology.",
+        f"Weekly update on {selected_ticker}'s stock performance.",
+        f"Is {selected_ticker} a good long-term investment?",
+        f"Memes about {selected_ticker} taking over the internet again."
+    ]
+    # Filter posts to be somewhat relevant or randomly included
+    filtered_posts = [post for post in mock_posts if selected_ticker.lower() in post.lower() or np.random.rand() > 0.5]
+    top_posts = filtered_posts[:5] if filtered_posts else ["No specific top posts found for this ticker in mock data."]
+
+
+    # Mock Ticker Frequency: Simulates how often various tickers are mentioned
+    all_tickers = ['TSLA', 'GME', 'AMC', 'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN']
+    ticker_freq_data = {
+        'Ticker': all_tickers,
+        'Frequency': np.random.randint(50, 500, len(all_tickers)) # Random frequencies
+    }
+    df_ticker_freq = pd.DataFrame(ticker_freq_data)
+    df_ticker_freq = df_ticker_freq.sort_values(by='Frequency', ascending=False) # Sort by frequency
+
+    return df_sentiment, df_price, top_posts, df_ticker_freq
+
+# --- Sidebar Filters ---
+# These widgets allow users to control the data displayed in the dashboard
+st.sidebar.header("Filter Data")
+
+# Ticker Selection: Dropdown to choose a stock ticker
+available_tickers = ['TSLA', 'GME', 'AMC', 'NVDA', 'AAPL', 'MSFT', 'GOOGL', 'AMZN']
+selected_ticker = st.sidebar.selectbox(
+    "Select Ticker",
+    available_tickers,
+    index=available_tickers.index('TSLA') # Default selection is 'TSLA'
+)
+
+# Date Range Selection: Inputs for start and end dates
+today = datetime.date.today()
+default_start_date = today - datetime.timedelta(days=30) # Default to 30 days ago
+default_end_date = today # Default to today
+
+start_date = st.sidebar.date_input("Start Date", default_start_date)
+end_date = st.sidebar.date_input("End Date", default_end_date)
+
+# Date validation: Ensure start date is not after end date
+if start_date > end_date:
+    st.sidebar.error("Error: End date must be after start date.")
+    st.stop() # Stop execution if dates are invalid
+
+# Sentiment Range Slider: Filter data by overall sentiment score
+sentiment_range = st.sidebar.slider(
+    "Sentiment Score Range",
+    min_value=-1.0, # Minimum possible sentiment score
+    max_value=1.0,  # Maximum possible sentiment score
+    value=(-1.0, 1.0), # Default range covers all sentiment
+    step=0.1,       # Slider step increment
+    help="Filter sentiment scores. -1.0 is very negative, 1.0 is very positive."
+)
+
+# --- Data Loading ---
+# Call the mock data generation function based on selected filters
+df_sentiment, df_price, top_reddit_posts, df_ticker_frequency = \
+    generate_mock_data(start_date, end_date, selected_ticker)
+
+# Apply sentiment range filter to the sentiment DataFrame
+if not df_sentiment.empty:
+    df_sentiment_filtered = df_sentiment[
+        (df_sentiment['Overall_Sentiment'] >= sentiment_range[0]) &
+        (df_sentiment['Overall_Sentiment'] <= sentiment_range[1])
+    ]
+else:
+    df_sentiment_filtered = pd.DataFrame() # Ensure it's an empty DataFrame if no data
+
+# --- Main Dashboard Layout ---
+st.header(f"Dashboard for {selected_ticker}")
+
+# --- Row 1: Sentiment Timeline & Top Reddit Posts ---
+# Use columns to arrange content side-by-side on wider screens
+col1, col2 = st.columns([2, 1]) # col1 takes 2/3 width, col2 takes 1/3
+
+with col1:
+    st.subheader("Sentiment Timeline")
+    if not df_sentiment_filtered.empty:
+        # Create a line chart of overall sentiment over time using Plotly Express
+        fig_sentiment = px.line(
+            df_sentiment_filtered,
+            x='Date',
+            y='Overall_Sentiment',
+            title=f'Overall Sentiment for {selected_ticker} Over Time',
+            labels={'Overall_Sentiment': 'Sentiment Score'},
+            line_shape="spline", # Smooth the line
+            markers=True # Show markers for each data point
+        )
+        fig_sentiment.update_yaxes(range=[-1.0, 1.0]) # Set fixed y-axis range for consistency
+        fig_sentiment.update_layout(hovermode="x unified") # Unified hover for better UX
+        st.plotly_chart(fig_sentiment, use_container_width=True) # Display chart, make it responsive
+    else:
+        st.info("No sentiment data available for the selected filters.")
+
+with col2:
+    st.subheader("Top Reddit Posts")
+    if top_reddit_posts:
+        # Display each top Reddit post with a separator
+        for i, post in enumerate(top_reddit_posts):
+            st.markdown(f"**{i+1}.** {post}")
+            if i < len(top_reddit_posts) - 1:
+                st.markdown("---") # Horizontal rule as a separator
+    else:
+        st.info("No top Reddit posts found for the selected ticker/date range.")
+
+st.markdown("---") # Visual separator between major sections
+
+# --- Row 2: Ticker Frequency & Correlation Plot ---
+col3, col4 = st.columns([1, 2]) # col3 takes 1/3 width, col4 takes 2/3
+
+with col3:
+    st.subheader("Ticker Frequency")
+    if not df_ticker_frequency.empty:
+        # Create a bar chart of the most frequent tickers
+        fig_freq = px.bar(
+            df_ticker_frequency.head(10), # Show top 10 tickers
+            x='Ticker',
+            y='Frequency',
+            title='Most Frequent Tickers',
+            labels={'Frequency': 'Mentions/Queries'}
+        )
+        st.plotly_chart(fig_freq, use_container_width=True)
+    else:
+        st.info("No ticker frequency data available.")
+
+with col4:
+    st.subheader("Price-Sentiment Correlation")
+    # Merge sentiment and price data on 'Date' to analyze their relationship
+    df_merged = pd.merge(df_sentiment_filtered, df_price, on='Date', how='inner')
+
+    if not df_merged.empty:
+        # Create a scatter plot of sentiment vs. price
+        fig_corr = px.scatter(
+            df_merged,
+            x='Overall_Sentiment',
+            y='Price',
+            trendline="ols", # Add an Ordinary Least Squares (linear) regression line
+            title=f'Sentiment vs. Price for {selected_ticker}',
+            labels={'Overall_Sentiment': 'Overall Sentiment Score', 'Price': 'Stock Price ($)'},
+            hover_data=['Date'] # Show date on hover
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
+
+        # Display the calculated correlation coefficient
+        if len(df_merged) > 1: # Correlation requires at least two data points
+            correlation = df_merged['Overall_Sentiment'].corr(df_merged['Price'])
+            if pd.notna(correlation): # Check if correlation is a valid number
+                st.info(f"**Correlation Coefficient (Sentiment vs. Price):** `{correlation:.2f}`")
+            else:
+                st.warning("Could not calculate correlation (e.g., constant sentiment or price values).")
+        else:
+            st.warning("Not enough data points to calculate correlation.")
+    else:
+        st.info("Not enough combined sentiment and price data for correlation analysis.")
+
+st.markdown("---") # Visual separator
+
+# --- Export Capabilities ---
+st.header("Export Data")
+st.write("You can export the raw data or current charts here.")
+
+# Button to download the filtered sentiment data as CSV
+if not df_sentiment_filtered.empty:
+    csv_data = df_sentiment_filtered.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Download Filtered Sentiment Data (CSV)",
+        data=csv_data,
+        file_name=f"{selected_ticker}_sentiment_data_{start_date}_{end_date}.csv",
+        mime="text/csv",
+        help="Downloads the sentiment data currently displayed based on filters."
+    )
+else:
+    st.info("No sentiment data to export.")
+
+st.write("Charts can typically be downloaded directly from the Plotly chart's mode bar (look for the camera icon on the chart itself).")
+
+# --- Footer ---
+st.markdown("---")
+st.markdown("Dashboard developed using Streamlit, Plotly, and Pandas.")
+�
